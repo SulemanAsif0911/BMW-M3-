@@ -386,19 +386,6 @@ p{ margin:0; }
   color: var(--ink-faint);
 }
 
-/* ---------------- Shot-transition flash ---------------- */
-/* A brief, deliberate flash that masks the camera cut when moving from
-   one car's chapter to the next -- reads as an intentional shot change
-   rather than a pop. Driven purely by JS opacity tweens. */
-#shot-flash{
-  position: fixed;
-  inset: 0;
-  z-index: 15;
-  pointer-events: none;
-  background: var(--void);
-  opacity: 0;
-}
-
 /* ---------------- Footer ---------------- */
 #footer{
   min-height: 70vh;

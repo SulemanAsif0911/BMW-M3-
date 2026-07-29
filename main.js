@@ -1,8 +1,9 @@
 /* ============================================================
    THE M3 LINEAGE — scroll-driven 3D archive
-   Three.js renders a single fixed WebGL stage behind the page;
-   GSAP ScrollTrigger drives the camera and a per-part "magnet"
-   assembly animation as the visitor scrolls through each car.
+   Three.js renders a single fixed WebGL stage behind the page.
+   Camera never moves. Each car simply slides in from the left
+   or right edge of the frame as its chapter scrolls into view,
+   then holds still while its text is read.
    ============================================================ */
 
 import * as THREE from 'three';
@@ -15,7 +16,7 @@ const ScrollTrigger = window.ScrollTrigger;
 gsap.registerPlugin(ScrollTrigger);
 
 /* ---------------------------------------------------------
-   Renderer / Scene / Camera
+   Renderer / Scene / Camera  (static camera — no orbiting)
 --------------------------------------------------------- */
 const canvas = document.getElementById('stage-canvas');
 const renderer = new THREE.WebGLRenderer({
@@ -32,16 +33,16 @@ renderer.setClearColor(0x0a0b0d, 1);
 const scene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(
-  35,
+  32,
   window.innerWidth / window.innerHeight,
   0.1,
   100
 );
-camera.position.set(0, 2.6, 8.5);
-camera.lookAt(0, 0.9, 0);
+camera.position.set(0, 1.7, 7.6);
+camera.lookAt(0, 0.75, 0);
 
-/* Lighting — a simple three-point studio rig. No shadows: keeps the
-   frame rate high regardless of how dense a given model's mesh is. */
+/* Simple three-point studio lighting. No shadows — keeps frame
+   rate steady no matter how dense a given model's mesh is. */
 scene.add(new THREE.HemisphereLight(0xdfe6f2, 0x0a0a0d, 1.15));
 
 const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
@@ -56,7 +57,6 @@ const fillLight = new THREE.DirectionalLight(0xfff2e6, 0.5);
 fillLight.position.set(-4, 2, 6);
 scene.add(fillLight);
 
-/* Quiet ground disc so cars have something to sit on. */
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(10, 48),
   new THREE.MeshStandardMaterial({ color: 0x0d0f12, roughness: 0.4, metalness: 0.12 })
@@ -84,9 +84,10 @@ const manager = new THREE.LoadingManager();
 const loaderEl = document.getElementById('loader');
 const loaderFill = document.getElementById('loader-fill');
 const loaderPct = document.getElementById('loader-pct');
+const loaderMarkEl = document.querySelector('.loader-mark');
 
-manager.onProgress = (_url, loaded, total) => {
-  const pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+manager.onProgress = (_url, loadedCount, total) => {
+  const pct = total ? Math.min(100, Math.round((loadedCount / total) * 100)) : 0;
   loaderFill.style.width = pct + '%';
   loaderPct.textContent = pct + '%';
 };
@@ -103,35 +104,28 @@ function loadGLB(url) {
     gltfLoader.load(url, (gltf) => resolve(gltf), undefined, (err) => reject(err));
   });
 }
-// 
+
 /* ---------------------------------------------------------
    Model manifest
 --------------------------------------------------------- */
 const CHAPTER_ORDER = ['origin', 'racer', 'tuned', 'modern'];
 
+// side: which edge of the screen this car slides in FROM.
+// Chosen opposite to where each chapter's text card sits, so the
+// car never has to cross behind the copy while it arrives.
 const MODELS = {
-  origin: { url: 'm3-e30.glb', size: 5.0, label: 'ORIGIN — 1986' },
-  racer: { url: 'm3-gtr-e46-2001.glb', size: 4.35, label: 'RACER — 2001' },
-  tuned: { url: 'm3-gtr-e46-schnitzer.glb', size: 4.45, label: 'TUNED — SCHNITZER' },
-  modern: { url: 'm3-g81-touring.glb', size: 4.6, label: 'MODERN — 2022' },
+  origin: { url: 'assets/models/m3-e30.glb', size: 4.2, label: 'ORIGIN — 1986', side: 'right' },
+  racer: { url: 'assets/models/m3-gtr-e46-2001.glb', size: 4.35, label: 'RACER — 2001', side: 'left' },
+  tuned: { url: 'assets/models/m3-gtr-e46-nfs.glb', size: 4.45, label: 'ICON — 2005', side: 'right' },
+  modern: { url: 'assets/models/m3-g81-touring.glb', size: 4.6, label: 'MODERN — 2022', side: 'left' },
 };
 
-const LOGO_URL = 'm-logo.glb';
-
-/* Camera "drone" arc per chapter — angle in radians (measured around Y),
-   radius and height in world units. Every chapter sweeps the camera in
-   an arc around the car, descending slightly, so the whole vehicle is
-   read front-to-back like a low pass from a drone. */
-const CAMERA_ARCS = {
-  origin: { fromA: -2.05, toA: -0.35, fromR: 7.6, toR: 4.3, fromH: 3.6, toH: 1.15, lookY: 0.55 },
-  racer: { fromA: 2.05, toA: 0.35, fromR: 7.8, toR: 4.5, fromH: 3.4, toH: 1.05, lookY: 0.55 },
-  tuned: { fromA: -1.95, toA: -0.25, fromR: 7.6, toR: 4.5, fromH: 3.3, toH: 1.0, lookY: 0.55 },
-  modern: { fromA: 1.95, toA: 0.25, fromR: 8.0, toR: 4.8, fromH: 3.5, toH: 1.15, lookY: 0.6 },
-};
+const OFFSCREEN_X = 9.5;
+const SETTLE_YAW = { origin: 0.32, racer: -0.28, tuned: 0.3, modern: -0.26 };
 
 const state = {
   logoRoot: null,
-  chapters: {}, // key -> { root, parts:[], ready:true }
+  chapters: {}, // key -> { wrapper, ready:true }
   activeChapter: null,
 };
 
@@ -139,8 +133,8 @@ const state = {
    Geometry helpers
 --------------------------------------------------------- */
 
-// Centers an object at the origin on X/Z and rests it on the ground (y=0),
-// scaled so its longest dimension equals `targetSize`.
+// Centers an object at the origin on X/Z and rests it on the ground
+// (y = 0), scaled so its longest dimension equals `targetSize`.
 function normalizeAndGround(object, targetSize) {
   let box = new THREE.Box3().setFromObject(object);
   const size = box.getSize(new THREE.Vector3());
@@ -156,92 +150,22 @@ function normalizeAndGround(object, targetSize) {
   return object;
 }
 
-// Adaptively partitions the model's node graph into at most `maxParts`
-// groups. Widely-exported car GLBs are already split into meaningful
-// chunks (body, doors, wheels, glass, interior...); this walks the tree
-// breadth-first and stops descending once the running total would
-// exceed the cap, so dense models degrade gracefully instead of
-// animating hundreds of individual meshes.
-function collectPartNodes(root, maxParts = 34) {
-  let level = [...root.children];
-  if (level.length === 0) return [];
-  let safety = 0;
-  while (safety++ < 8) {
-    let next = [];
-    let wouldExceed = false;
-    for (const node of level) {
-      const childCount = node.children ? node.children.length : 0;
-      if (childCount > 0 && next.length + childCount <= maxParts) {
-        next.push(...node.children);
-      } else {
-        next.push(node);
-      }
-    }
-    if (next.length === level.length || next.length >= maxParts) {
-      level = next;
-      break;
-    }
-    level = next;
-  }
-  return level;
-}
-
-// Builds the "magnet" explode data for a chapter's car: every part gets
-// a scattered starting transform (flung outward + tumbled) and tweens
-// back to its true, modeled position as the visitor scrolls.
-function buildExplodeParts(root) {
-  const box = new THREE.Box3().setFromObject(root);
-  const size = box.getSize(new THREE.Vector3());
-  const spread = Math.max(size.x, size.y, size.z) * 1.15 + 1.2;
-
-  const nodes = collectPartNodes(root);
-  const parts = [];
-
-  nodes.forEach((node) => {
-    if (!node.isObject3D) return;
-
-    const toPos = node.position.clone();
-    const toQuat = node.quaternion.clone();
-
-    const dir = new THREE.Vector3(
-      Math.random() * 2 - 1,
-      Math.random() * 1.4 - 0.2,
-      Math.random() * 2 - 1
-    ).normalize();
-    const dist = spread * (1.6 + Math.random() * 2.0);
-    const fromPos = toPos.clone().addScaledVector(dir, dist);
-
-    const fromQuat = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(
-        (Math.random() - 0.5) * 3.2,
-        (Math.random() - 0.5) * 3.2,
-        (Math.random() - 0.5) * 3.2
-      )
-    );
-
-    node.position.copy(fromPos);
-    node.quaternion.copy(fromQuat);
-
-    parts.push({ node, fromPos, toPos, fromQuat, toQuat, proxy: { t: 0 } });
-  });
-
-  return parts;
-}
-
 /* ---------------------------------------------------------
-   Chapter setup
+   Chapter setup — one model, one wrapper, one slide-in tween
 --------------------------------------------------------- */
 function setupChapter(key, gltf) {
   const cfg = MODELS[key];
-  const root = gltf.scene;
-  normalizeAndGround(root, cfg.size);
-  scene.add(root);
-  root.visible = state.activeChapter === key;
+  const car = gltf.scene;
+  normalizeAndGround(car, cfg.size);
+  car.rotation.y = SETTLE_YAW[key] || 0;
 
-  const parts = buildExplodeParts(root);
+  const wrapper = new THREE.Group();
+  wrapper.add(car);
+  wrapper.position.x = cfg.side === 'left' ? -OFFSCREEN_X : OFFSCREEN_X;
+  wrapper.visible = state.activeChapter === key;
+  scene.add(wrapper);
 
-  state.chapters[key] = { root, parts, ready: true };
-
+  state.chapters[key] = { wrapper, ready: true };
   buildChapterScrub(key);
 }
 
@@ -250,86 +174,35 @@ function buildChapterScrub(key) {
   const chapter = state.chapters[key];
   if (!sectionEl || !chapter) return;
 
-  const arc = CAMERA_ARCS[key];
-  const camProxy = { a: arc.fromA, r: arc.fromR, h: arc.fromH };
+  const cfg = MODELS[key];
+  const fromX = cfg.side === 'left' ? -OFFSCREEN_X : OFFSCREEN_X;
 
-  const tl = gsap.timeline({
+  gsap.timeline({
     scrollTrigger: {
       trigger: sectionEl,
-      start: 'top top',
-      end: 'bottom top',
+      start: 'top 88%',
+      end: 'top 38%',
       scrub: true,
+      onEnter: () => showChapter(key),
+      onEnterBack: () => showChapter(key),
     },
-  });
-
-  tl.to(
-    camProxy,
-    {
-      a: arc.toA,
-      r: arc.toR,
-      h: arc.toH,
-      duration: 3,
-      ease: 'none',
-      onUpdate: () => {
-        if (state.activeChapter !== key) return;
-        camera.position.set(
-          Math.sin(camProxy.a) * camProxy.r,
-          camProxy.h,
-          Math.cos(camProxy.a) * camProxy.r
-        );
-        camera.lookAt(0, arc.lookY, 0);
-      },
-    },
-    0
+  }).fromTo(
+    chapter.wrapper.position,
+    { x: fromX },
+    { x: 0, ease: 'power2.out', duration: 1 }
   );
-
-  chapter.parts.forEach((p, i) => {
-    tl.to(
-      p.proxy,
-      {
-        t: 1,
-        duration: 1.15,
-        ease: 'back.out(1.5)',
-        onUpdate: () => {
-          p.node.position.lerpVectors(p.fromPos, p.toPos, p.proxy.t);
-          p.node.quaternion.slerpQuaternions(p.fromQuat, p.toQuat, p.proxy.t);
-        },
-      },
-      Math.min(i * 0.022, 1.7)
-    );
-  });
-
-  chapter.timeline = tl;
 }
 
 /* ---------------------------------------------------------
-   Chapter activation (visibility swap + shot-flash)
+   Chapter activation — exactly one car visible at a time
 --------------------------------------------------------- */
-const flashEl = document.getElementById('shot-flash');
-
-function activateChapter(key) {
+function showChapter(key) {
   if (state.activeChapter === key) return;
-  const prev = state.activeChapter;
   state.activeChapter = key;
-
-  gsap.killTweensOf(flashEl);
-  gsap.timeline()
-    .to(flashEl, { opacity: 0.92, duration: 0.22, ease: 'power2.in' })
-    .call(() => {
-      CHAPTER_ORDER.forEach((k) => {
-        const c = state.chapters[k];
-        if (c) c.root.visible = k === key;
-      });
-      // Snap the camera to this chapter's starting arc position instantly
-      // while the frame is covered, so the reveal itself is clean.
-      const arc = CAMERA_ARCS[key];
-      if (arc) {
-        camera.position.set(Math.sin(arc.fromA) * arc.fromR, arc.fromH, Math.cos(arc.fromA) * arc.fromR);
-        camera.lookAt(0, arc.lookY, 0);
-      }
-    })
-    .to(flashEl, { opacity: 0, duration: 0.55, ease: 'power2.out' });
-
+  CHAPTER_ORDER.forEach((k) => {
+    const c = state.chapters[k];
+    if (c) c.wrapper.visible = k === key;
+  });
   updateRail(key);
 }
 
@@ -368,35 +241,60 @@ function setupLogo(gltf) {
 }
 
 /* ---------------------------------------------------------
+   Failure handling — never leave a silently blank page
+--------------------------------------------------------- */
+function showLoadError(detail) {
+  loaderMarkEl.textContent = 'BMW M · COULD NOT LOAD MODELS';
+  const bar = document.querySelector('.loader-bar');
+  if (bar) bar.style.display = 'none';
+  loaderPct.innerHTML =
+    'This page needs to be served over a local web server, not opened by ' +
+    'double-clicking the file.<br><br>From this folder, run:<br>' +
+    '<code style="color:#f3f4f6">python3 -m http.server 8080</code><br>' +
+    'then open <code style="color:#f3f4f6">http://localhost:8080</code>.';
+  loaderPct.style.maxWidth = '340px';
+  loaderPct.style.lineHeight = '1.6';
+  loaderPct.style.textAlign = 'center';
+  loaderEl.classList.remove('hidden');
+  if (detail) console.error(detail);
+}
+
+window.addEventListener('unhandledrejection', (e) => showLoadError(e.reason));
+window.addEventListener('error', (e) => showLoadError(e.error || e.message));
+
+/* ---------------------------------------------------------
    Boot sequence
 --------------------------------------------------------- */
 async function boot() {
   state.activeChapter = 'hero';
 
-  let logoGltf, firstGltf;
-  try {
-    [logoGltf, firstGltf] = await Promise.all([
-      loadGLB(LOGO_URL),
-      loadGLB(MODELS[CHAPTER_ORDER[0]].url),
-    ]);
-  } catch (err) {
-    console.error('Initial model load failed:', err);
+  const [logoResult, firstResult] = await Promise.allSettled([
+    loadGLB('assets/models/m-logo.glb'),
+    loadGLB(MODELS[CHAPTER_ORDER[0]].url),
+  ]);
+
+  if (logoResult.status === 'fulfilled') {
+    setupLogo(logoResult.value);
+  } else {
+    console.error('Logo failed to load:', logoResult.reason);
   }
 
-  if (logoGltf) setupLogo(logoGltf);
+  if (firstResult.status === 'fulfilled') {
+    setupChapter(CHAPTER_ORDER[0], firstResult.value);
+  } else {
+    console.error('First chapter failed to load:', firstResult.reason);
+  }
 
-  const firstKey = CHAPTER_ORDER[0];
-  if (firstGltf) setupChapter(firstKey, firstGltf);
+  if (logoResult.status === 'rejected' && firstResult.status === 'rejected') {
+    showLoadError(firstResult.reason);
+    return;
+  }
 
-  // Reveal the page.
   loaderEl.classList.add('hidden');
   renderer.setAnimationLoop(tick);
-
   initScrollSystems();
 
-  // Load the remaining chapters in the background — they aren't needed
-  // until the visitor scrolls several viewports down, which gives slower
-  // connections real time to finish fetching before each car is due.
+  // Remaining chapters load quietly in the background.
   CHAPTER_ORDER.slice(1).forEach((key) => {
     loadGLB(MODELS[key].url)
       .then((gltf) => setupChapter(key, gltf))
@@ -405,25 +303,9 @@ async function boot() {
 }
 
 /* ---------------------------------------------------------
-   Scroll systems: hero CTA, hero hint, chapter activation
+   Scroll systems: hero CTA, hero hint, hero<->chapter boundary
 --------------------------------------------------------- */
 function initScrollSystems() {
-  // First chapter's activation trigger + rail wiring is set up alongside
-  // every other chapter, uniformly, once each model is ready:
-  CHAPTER_ORDER.forEach((key) => {
-    const sectionEl = document.getElementById('chapter-' + key);
-    if (!sectionEl) return;
-    ScrollTrigger.create({
-      trigger: sectionEl,
-      start: 'top center',
-      end: 'bottom center',
-      onEnter: () => activateChapter(key),
-      onEnterBack: () => activateChapter(key),
-    });
-  });
-
-  // Hero <-> first chapter boundary: when scrolled back to the very top,
-  // treat it as "hero" so the logo alone is shown.
   ScrollTrigger.create({
     trigger: '#hero',
     start: 'top top',
@@ -432,23 +314,12 @@ function initScrollSystems() {
       state.activeChapter = 'hero';
       CHAPTER_ORDER.forEach((k) => {
         const c = state.chapters[k];
-        if (c) c.root.visible = false;
+        if (c) c.wrapper.visible = false;
       });
       updateRail(CHAPTER_ORDER[0]);
     },
   });
 
-  const firstSection = document.getElementById('chapter-' + CHAPTER_ORDER[0]);
-  if (firstSection) {
-    ScrollTrigger.create({
-      trigger: firstSection,
-      start: 'top 90%',
-      onEnter: () => activateChapter(CHAPTER_ORDER[0]),
-      once: true,
-    });
-  }
-
-  // Rail fill across the whole chapters block.
   const railStart = document.getElementById('chapter-' + CHAPTER_ORDER[0]);
   const railEnd = document.getElementById('chapter-' + CHAPTER_ORDER[CHAPTER_ORDER.length - 1]);
   if (railStart && railEnd) {
@@ -465,7 +336,6 @@ function initScrollSystems() {
 
   updateRail(CHAPTER_ORDER[0]);
 
-  // Hero scroll hint.
   const hint = document.getElementById('scroll-hint');
   setTimeout(() => hint.classList.add('visible'), 900);
   window.addEventListener(
@@ -476,7 +346,6 @@ function initScrollSystems() {
     { passive: true }
   );
 
-  // "Get started" CTA scrolls to chapter 1.
   document.getElementById('get-started').addEventListener('click', () => {
     document.getElementById('chapter-' + CHAPTER_ORDER[0]).scrollIntoView({ behavior: 'smooth' });
   });

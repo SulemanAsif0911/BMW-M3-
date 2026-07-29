@@ -1,9 +1,10 @@
 # The M3 Lineage — a scroll-driven 3D archive
 
 A single-page site built with **Three.js** (WebGL) and **GSAP ScrollTrigger**.
-One fixed 3D stage sits behind the page; as you scroll, the camera flies a
-low "drone" arc around each car while its parts are pulled into place from
-far away, like a magnet snapping metal into shape.
+One fixed 3D stage sits behind the page. The camera never moves — as you
+scroll into each chapter, that car simply slides in from the edge of the
+screen (opposite side from its text card) and settles in place while you
+read, then the next car takes over the same way.
 
 ## Structure
 
@@ -11,15 +12,17 @@ far away, like a magnet snapping metal into shape.
 index.html            — page markup (hero + 4 chapters + footer)
 styles.css            — design tokens (BMW-blue accent, tri-colour M rail)
 main.js                — Three.js scene, GLTF loading, scroll choreography
-assets/models/         — the 5 supplied .glb files (renamed, unmodified)
+assets/models/         — the 5 .glb files used by the site
 ```
 
 ## Running it
 
 Browsers block `fetch()` of local files and ES module imports over the
-bare `file://` protocol, so you need to serve the folder over local HTTP —
-opening `index.html` by double-click will not work. From inside this
-folder, run any one of:
+bare `file://` protocol, so this needs to be served over local HTTP —
+opening `index.html` by double-clicking will not work, and the page will
+show a clear on-screen message telling you so if it detects that.
+
+From inside this folder, run one of:
 
 ```bash
 python3 -m http.server 8080      # then open http://localhost:8080
@@ -27,53 +30,48 @@ python3 -m http.server 8080      # then open http://localhost:8080
 npx serve .
 ```
 
-Everything else — three.js, GSAP/ScrollTrigger, and the two Google Fonts —
-loads from a CDN at runtime, so the machine opening the site needs an
-internet connection.
+Three.js, GSAP/ScrollTrigger, and the two Google Fonts load from a CDN at
+runtime, so whatever machine opens the site needs an internet connection.
 
-## How the scroll choreography works
+## How it works (and why it shouldn't lag)
 
-- **One fixed `<canvas>`** stays behind the whole page (`position: fixed`);
-  the HTML above it scrolls normally. Only one WebGL context ever exists,
-  which is the main reason there's no stutter switching between chapters.
-- **Each car's parts** are captured from the model's own node hierarchy
-  (up to ~34 groups, however the model was authored), scattered to random
-  positions/rotations off-frame, then tweened back to their true, modeled
-  transform as you scroll — the "magnet" assembly effect.
-- **The camera** sweeps an arc (angle, radius, height) around the car in
-  the same scroll-scrubbed timeline, so the whole vehicle reads front-to-
-  back like a low drone pass.
-- **A short flash** masks the instant the camera and model swap for the
-  *next* chapter, so the cut between cars reads as a deliberate shot
-  change rather than a pop.
-- Only the **logo + first car** block the initial loading screen; the
-  remaining three cars fetch in the background while you're still reading
-  the first chapter.
+- **One fixed `<canvas>`** stays behind the whole page; only one WebGL
+  context ever exists, which is the main reason there's no stutter
+  switching between chapters.
+- **The camera is completely static** — position and lookAt are set once
+  and never change. No per-frame trig, no orbiting.
+- **Each car gets exactly one animated property**: its wrapper group's
+  X position, tweened from off-screen to center over a short scroll
+  range right as its chapter enters, then it just sits still. That's the
+  entire animation budget per car — cheap regardless of how many meshes
+  a given model contains.
+- **Only one car is ever visible at a time** — switching chapters simply
+  toggles which wrapper is shown, so you never have two cars rendering
+  (or fighting for the same screen space) simultaneously.
+- **Loading is resilient**: only the logo + first car block the initial
+  loading screen; the other three fetch quietly in the background. If a
+  model fails to load — most commonly because the site was opened via
+  `file://` instead of a local server — you'll see a plain-language
+  message on screen instead of a silent blank page.
 
-## A note on file size and performance
+## The four chapters
 
-The five supplied models total **~46 MB**, and the Competition Touring
-model in particular carries 462 individual meshes / 85 materials. That's
-a lot of geometry to hand a browser, especially over a slow connection or
-on a low-powered device. The site is built to keep runtime performance
-smooth regardless (single canvas, no shadows, capped device-pixel-ratio,
-background-loading, an adaptive part cap for the assembly effect) — but
-initial download time is still bound by those file sizes.
+1. **BMW M3 (E30, 1986)** — the original homologation special.
+2. **BMW M3 GTR (E46, 2001)** — the V8 homologation racer that won on debut.
+3. **BMW M3 GTR (E46, 2005 livery)** — the black-and-orange car from
+   *Need for Speed: Most Wanted*, replacing the earlier AC Schnitzer build.
+4. **BMW M3 Competition Touring (G81, 2022)** — the first-ever M3 wagon.
 
-If you want it to feel even snappier, especially on mobile:
-- Run the `.glb` files through **`gltf-transform`** or **`gltfpack`**
-  with Draco/Meshopt compression and texture resizing/re-encoding to
-  WebP — this can often cut file size by 60–90% with no visible
-  difference. (The loader in `main.js` already has Draco and Meshopt
-  decoders wired up, so compressed files will work without any code
-  changes.)
-- Serve the models with gzip/Brotli compression enabled on whatever
-  host you deploy this to (most static hosts do this automatically).
+Specs quoted in each chapter reflect publicly documented figures for each
+car. The NFS Most Wanted chapter is framed as a pop-culture appearance,
+not an official BMW Motorsport specification.
 
-## Content notes
+## If you want to go further
 
-Specs quoted in each chapter (power, 0–60, top speed, etc.) reflect
-publicly documented figures for each car. The "AC Schnitzer Black
-Edition" chapter is presented as an independent aftermarket street
-tribute to the E46 GTR rather than an official BMW Motorsport product,
-since it isn't a documented factory specification.
+The G81 Competition Touring model carries 462 individual meshes and is
+by far the largest file here (~21 MB); the other four models are much
+lighter. If download time on a slow connection ever becomes noticeable,
+running the `.glb` files through `gltf-transform` or `gltfpack` (Draco +
+Meshopt compression, texture re-encoding) can shrink them significantly
+with no code changes needed — the loader already has both decoders
+wired up.
