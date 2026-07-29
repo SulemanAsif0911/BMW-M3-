@@ -269,7 +269,7 @@ async function boot() {
   state.activeChapter = 'hero';
 
   const [logoResult, firstResult] = await Promise.allSettled([
-    loadGLB('assets/models/m-logo.glb'),
+    loadGLB('m-logo.glb'),
     loadGLB(MODELS[CHAPTER_ORDER[0]].url),
   ]);
 
