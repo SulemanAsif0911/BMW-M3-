@@ -103,7 +103,7 @@ function loadGLB(url) {
     gltfLoader.load(url, (gltf) => resolve(gltf), undefined, (err) => reject(err));
   });
 }
-
+// 
 /* ---------------------------------------------------------
    Model manifest
 --------------------------------------------------------- */
