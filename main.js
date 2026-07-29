@@ -114,10 +114,10 @@ const CHAPTER_ORDER = ['origin', 'racer', 'tuned', 'modern'];
 // Chosen opposite to where each chapter's text card sits, so the
 // car never has to cross behind the copy while it arrives.
 const MODELS = {
-  origin: { url: 'assets/models/m3-e30.glb', size: 4.2, label: 'ORIGIN — 1986', side: 'right' },
-  racer: { url: 'assets/models/m3-gtr-e46-2001.glb', size: 4.35, label: 'RACER — 2001', side: 'left' },
-  tuned: { url: 'assets/models/m3-gtr-e46-nfs.glb', size: 4.45, label: 'ICON — 2005', side: 'right' },
-  modern: { url: 'assets/models/m3-g81-touring.glb', size: 4.6, label: 'MODERN — 2022', side: 'left' },
+  origin: { url: 'm3-e30.glb', size: 4.2, label: 'ORIGIN — 1986', side: 'right' },
+  racer: { url: 'm3-gtr-e46-2001.glb', size: 4.35, label: 'RACER — 2001', side: 'left' },
+  tuned: { url: 'm3-gtr-e46-nfs.glb', size: 4.45, label: 'ICON — 2005', side: 'right' },
+  modern: { url: 'm3-g81-touring.glb', size: 4.6, label: 'MODERN — 2022', side: 'left' },
 };
 
 const OFFSCREEN_X = 9.5;
@@ -276,7 +276,7 @@ async function boot() {
   activateChapter('hero');
 
   const [logoResult, firstResult] = await Promise.allSettled([
-    loadGLB('assets/models/m-logo.glb'),
+    loadGLB('m-logo.glb'),
     loadGLB(MODELS[CHAPTER_ORDER[0]].url),
   ]);
 
