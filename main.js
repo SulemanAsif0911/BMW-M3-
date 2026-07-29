@@ -114,10 +114,10 @@ const CHAPTER_ORDER = ['origin', 'racer', 'tuned', 'modern'];
 // Chosen opposite to where each chapter's text card sits, so the
 // car never has to cross behind the copy while it arrives.
 const MODELS = {
-  origin: { url: 'm3-e30.glb', size: 4.2, label: 'ORIGIN — 1986', side: 'right' },
-  racer: { url: 'm3-gtr-e46-2001.glb', size: 4.35, label: 'RACER — 2001', side: 'left' },
-  tuned: { url: 'm3-gtr-e46-nfs.glb', size: 4.45, label: 'ICON — 2005', side: 'right' },
-  modern: { url: 'm3-g81-touring.glb', size: 4.6, label: 'MODERN — 2022', side: 'left' },
+  origin: { url: 'assets/models/m3-e30.glb', size: 4.2, label: 'ORIGIN — 1986', side: 'right' },
+  racer: { url: 'assets/models/m3-gtr-e46-2001.glb', size: 4.35, label: 'RACER — 2001', side: 'left' },
+  tuned: { url: 'assets/models/m3-gtr-e46-nfs.glb', size: 4.45, label: 'ICON — 2005', side: 'right' },
+  modern: { url: 'assets/models/m3-g81-touring.glb', size: 4.6, label: 'MODERN — 2022', side: 'left' },
 };
 
 const OFFSCREEN_X = 9.5;
@@ -126,7 +126,7 @@ const SETTLE_YAW = { origin: 0.32, racer: -0.28, tuned: 0.3, modern: -0.26 };
 const state = {
   logoRoot: null,
   chapters: {}, // key -> { wrapper, ready:true }
-  activeChapter: null,
+  activeChapter: 'hero', // the chapter that SHOULD be showing right now
 };
 
 /* ---------------------------------------------------------
@@ -151,6 +151,23 @@ function normalizeAndGround(object, targetSize) {
 }
 
 /* ---------------------------------------------------------
+   Chapter activation — the single source of truth for what's
+   visible. Called both by scroll triggers (which exist from the
+   very start, regardless of load status) AND by a model's own
+   load-completion, so a slow-loading car can never get "skipped"
+   nor leave a previous car stuck on screen.
+--------------------------------------------------------- */
+function activateChapter(key) {
+  state.activeChapter = key;
+  if (state.logoRoot) state.logoRoot.visible = key === 'hero';
+  CHAPTER_ORDER.forEach((k) => {
+    const c = state.chapters[k];
+    if (c) c.wrapper.visible = k === key;
+  });
+  updateRail(key === 'hero' ? CHAPTER_ORDER[0] : key);
+}
+
+/* ---------------------------------------------------------
    Chapter setup — one model, one wrapper, one slide-in tween
 --------------------------------------------------------- */
 function setupChapter(key, gltf) {
@@ -162,6 +179,10 @@ function setupChapter(key, gltf) {
   const wrapper = new THREE.Group();
   wrapper.add(car);
   wrapper.position.x = cfg.side === 'left' ? -OFFSCREEN_X : OFFSCREEN_X;
+  // Reflect whatever the page's desired state already is at the moment
+  // this model finishes loading -- if the visitor scrolled past this
+  // chapter's trigger zone before the file arrived, it appears correctly
+  // right away instead of waiting for another scroll event.
   wrapper.visible = state.activeChapter === key;
   scene.add(wrapper);
 
@@ -183,27 +204,12 @@ function buildChapterScrub(key) {
       start: 'top 88%',
       end: 'top 38%',
       scrub: true,
-      onEnter: () => showChapter(key),
-      onEnterBack: () => showChapter(key),
     },
   }).fromTo(
     chapter.wrapper.position,
     { x: fromX },
     { x: 0, ease: 'power2.out', duration: 1 }
   );
-}
-
-/* ---------------------------------------------------------
-   Chapter activation — exactly one car visible at a time
---------------------------------------------------------- */
-function showChapter(key) {
-  if (state.activeChapter === key) return;
-  state.activeChapter = key;
-  CHAPTER_ORDER.forEach((k) => {
-    const c = state.chapters[k];
-    if (c) c.wrapper.visible = k === key;
-  });
-  updateRail(key);
 }
 
 /* ---------------------------------------------------------
@@ -236,6 +242,7 @@ function setupLogo(gltf) {
   const root = gltf.scene;
   normalizeAndGround(root, 2.1);
   root.position.y += 0.4;
+  root.visible = state.activeChapter === 'hero';
   scene.add(root);
   state.logoRoot = root;
 }
@@ -266,10 +273,10 @@ window.addEventListener('error', (e) => showLoadError(e.error || e.message));
    Boot sequence
 --------------------------------------------------------- */
 async function boot() {
-  state.activeChapter = 'hero';
+  activateChapter('hero');
 
   const [logoResult, firstResult] = await Promise.allSettled([
-    loadGLB('m-logo.glb'),
+    loadGLB('assets/models/m-logo.glb'),
     loadGLB(MODELS[CHAPTER_ORDER[0]].url),
   ]);
 
@@ -294,7 +301,11 @@ async function boot() {
   renderer.setAnimationLoop(tick);
   initScrollSystems();
 
-  // Remaining chapters load quietly in the background.
+  // Remaining chapters load quietly in the background. Each one calls
+  // setupChapter as soon as it's ready, which independently re-applies
+  // whatever activateChapter last decided -- so a slow-loading car can
+  // never get scrolled past unnoticed, and never leaves a stale car
+  // from an earlier chapter stuck on screen.
   CHAPTER_ORDER.slice(1).forEach((key) => {
     loadGLB(MODELS[key].url)
       .then((gltf) => setupChapter(key, gltf))
@@ -303,21 +314,30 @@ async function boot() {
 }
 
 /* ---------------------------------------------------------
-   Scroll systems: hero CTA, hero hint, hero<->chapter boundary
+   Scroll systems: hero CTA, hero hint, chapter activation
 --------------------------------------------------------- */
 function initScrollSystems() {
+  // Every chapter's activation trigger is created immediately, up front,
+  // regardless of whether that chapter's model has finished loading yet.
+  // This is what guarantees a car is never skipped (or left stuck on
+  // screen past its section) just because it was still downloading.
+  CHAPTER_ORDER.forEach((key) => {
+    const sectionEl = document.getElementById('chapter-' + key);
+    if (!sectionEl) return;
+    ScrollTrigger.create({
+      trigger: sectionEl,
+      start: 'top 88%',
+      end: 'top 38%',
+      onEnter: () => activateChapter(key),
+      onEnterBack: () => activateChapter(key),
+    });
+  });
+
   ScrollTrigger.create({
     trigger: '#hero',
     start: 'top top',
     end: 'bottom center',
-    onEnterBack: () => {
-      state.activeChapter = 'hero';
-      CHAPTER_ORDER.forEach((k) => {
-        const c = state.chapters[k];
-        if (c) c.wrapper.visible = false;
-      });
-      updateRail(CHAPTER_ORDER[0]);
-    },
+    onEnterBack: () => activateChapter('hero'),
   });
 
   const railStart = document.getElementById('chapter-' + CHAPTER_ORDER[0]);
